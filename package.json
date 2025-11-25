@@ -1,0 +1,37 @@
+{
+  "name": "agent-context-manager",
+  "version": "1.0.0",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "@ai-sdk/anthropic": "^2.0.49",
+    "@ai-sdk/google": "^2.0.43",
+    "@ai-sdk/openai": "^2.0.72",
+    "@mdx-js/mdx": "^3.1.1",
+    "@types/mdast": "^4.0.4",
+    "ai": "^5.0.102",
+    "commander": "^14.0.2",
+    "dotenv": "^17.2.3",
+    "octokit": "^5.0.5",
+    "parse-diff": "^0.11.1",
+    "remark-mdx": "^3.1.1",
+    "remark-parse": "^11.0.0",
+    "remark-stringify": "^11.0.0",
+    "tree-sitter": "^0.21.1",
+    "tree-sitter-go": "^0.21.2",
+    "tree-sitter-rust": "^0.21.0",
+    "unified": "^11.0.5"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.14"
+  }
+}
