@@ -2,14 +2,16 @@ import { generateText, ModelMessage } from "ai"
 import { openai } from "@ai-sdk/openai"
 import { anthropic } from "@ai-sdk/anthropic"
 import { google } from "@ai-sdk/google"
+import { Db } from "./db.js";
 
 export interface TextOpts {
     model: string;
+    component: string;
     temperature?: number;
     prompt: ModelMessage[];
 }
 
-export async function text(opts: TextOpts): Promise<string> {
+export async function text(db: Db, opts: TextOpts): Promise<string> {
     const tokens = opts.model.split('/');
     let model: any;
     switch (tokens[0]) {
@@ -23,10 +25,24 @@ export async function text(opts: TextOpts): Promise<string> {
             model = google(tokens[1])
             break;
     }
+    const startUnixTs = Date.now();
+    const start = performance.now();
     const result = await generateText({
         model: model,
         temperature: opts.temperature,
-        prompt: opts.prompt
+        prompt: opts.prompt,
+        abortSignal: AbortSignal.timeout(10 * 60 * 1000)
     });
-    return result.content.filter(c => c.type == 'text').map(c => c.text).join('\n');
+    const duration = performance.now() - start;
+    const response = result.content.filter(c => c.type == 'text').map(c => c.text).join('\n');
+    await db.recordLlm({
+        component: opts.component,
+        duration: duration,
+        start: startUnixTs,
+        model: opts.model,
+        request: JSON.stringify(opts.prompt),
+        response: response,
+        usage: result.totalUsage,
+    })
+    return response;
 }

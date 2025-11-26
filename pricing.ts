@@ -1,3 +1,5 @@
+import { LanguageModelUsage } from "ai";
+
 const pricePerToken = 1_000_000;
 
 const pricings: { [K: string]: { [K: string]: { input: number, inputCached: number | null, output: number } } } = {
@@ -38,7 +40,7 @@ const pricings: { [K: string]: { [K: string]: { input: number, inputCached: numb
     }
 };
 
-export function price(model: string, usage: any): number {
+export function price(model: string, usage: LanguageModelUsage): number {
     const tokens = model.split('/', 2);
     const pricing = pricings[tokens[0]!]![tokens[1]!]!;
     return (

@@ -8,9 +8,10 @@ export async function CodeComponent(args: ComponentArgs) {
     if (language == null) { throw new Error("language must be set"); }
 
     const temperature = args.attributes["temperature"];
-    return await text({
+    return await text(args.db, {
         model: model,
         temperature: temperature,
+        component: 'Code',
         prompt: [
             {
                 role: 'system',

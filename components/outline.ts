@@ -5,9 +5,10 @@ export async function OutlineComponent(args: ComponentArgs) {
     const model = args.attributes["model"];
     if (model == null) { throw new Error("model must be set"); }
     const temperature = args.attributes["temperature"];
-    return await text({
+    return await text(args.db, {
         model: model,
         temperature: temperature,
+        component: 'Outline',
         prompt: [
             {
                 role: 'system',
