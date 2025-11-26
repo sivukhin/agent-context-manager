@@ -94,12 +94,23 @@ function createContextTreeFromString(content: string): Context {
 
 interface Component {
     executor: (args: ComponentArgs) => Promise<string>,
-    cache: boolean;
+    tags: string[];
 }
 
 interface AgentContextManagerOpts {
     cwd: string;
+    skip: string[];
     registry: { [K: string]: Component }
+}
+
+function intersects(a: string[], b: string[]): boolean {
+    const as = new Set(a);
+    for (const be of b) {
+        if (as.has(be)) {
+            return true;
+        }
+    }
+    return false;
 }
 
 async function execContext(db: Db, opts: AgentContextManagerOpts, context: ContextTree[]): Promise<string> {
@@ -115,23 +126,29 @@ async function execContext(db: Db, opts: AgentContextManagerOpts, context: Conte
                     throw new Error(`unexpected component ${element.name}`);
                 }
 
+                const component = opts.registry[element.name]!;
+                if (intersects(opts.skip, component.tags)) {
+                    result.push(`<${element.name} ${Object.entries(element.attributes).map(e => `${e[0]}=${JSON.stringify(e[1])}`).join(" ")}>
+${content}
+</${element.name}>
+                `);
+                    break;
+                }
+
                 const componentData = { id: element.id, component: element.name, attributes: element.attributes, content: content };
                 let componentResult = await db.getComponent(componentData);
-                if (componentResult != null) {
+                if (componentResult != null && !component.tags.includes('nocache')) {
                     result.push(componentResult);
                     break;
                 }
 
-                const component = opts.registry[element.name]!;
                 componentResult = await component.executor({
                     db: db,
                     attributes: element.attributes,
                     content: content,
                     cwd: opts.cwd
                 })
-                if (component.cache) {
-                    await db.setComponent(componentData, componentResult);
-                }
+                await db.setComponent(componentData, componentResult);
 
                 result.push(componentResult);
                 break;
@@ -153,9 +170,18 @@ async function showContext(db: Db, opts: AgentContextManagerOpts, context: Conte
                     throw new Error(`unexpected component ${element.name}`);
                 }
 
+                const component = opts.registry[element.name]!;
+                if (intersects(opts.skip, component.tags)) {
+                    result.push(`<${element.name} ${Object.entries(element.attributes).map(e => `${e[0]}=${JSON.stringify(e[1])}`).join(" ")}>
+${content}
+</${element.name}>
+                `);
+                    break;
+                }
+
                 const componentData = { id: element.id, component: element.name, attributes: element.attributes, content: content };
                 let componentResult = await db.getComponent(componentData);
-                if (componentResult != null) {
+                if (componentResult != null && !intersects(opts.skip, component.tags)) {
                     result.push(componentResult);
                     break;
                 }
@@ -184,27 +210,28 @@ async function showString(opts: AgentContextManagerOpts, content: string): Promi
 }
 
 const registry = {
-    'Shell': { executor: ShellComponent, cache: true },
-    'File': { executor: FileComponent, cache: true },
-    'Review': { executor: ReviewComponent, cache: true },
-    'Research': { executor: ResearchComponent, cache: true },
-    'Code': { executor: CodeComponent, cache: true },
-    'Outline': { executor: OutlineComponent, cache: true },
-    'Link': { executor: LinkComponent, cache: true },
-    'GitHubIssue': { executor: GitHubIssueComponent, cache: true },
-    'GitHubPr': { executor: GitHubPrComponent, cache: true },
+    'Shell': { executor: ShellComponent, tags: ['local', 'nocache'] },
+    'File': { executor: FileComponent, tags: ['local', 'nocache'] },
+    'Output': { executor: OutputComponent, tags: ['local', 'nocache'] },
 
-    'Output': { executor: OutputComponent, cache: false },
+    'Link': { executor: LinkComponent, tags: ['network', 'nocache'] },
+    'GitHubIssue': { executor: GitHubIssueComponent, tags: ['network', 'nocache'] },
+    'GitHubPr': { executor: GitHubPrComponent, tags: ['network', 'nocache'] },
+
+    'Review': { executor: ReviewComponent, tags: ['llm'] },
+    'Research': { executor: ResearchComponent, tags: ['llm'] },
+    'Code': { executor: CodeComponent, tags: ['llm'] },
+    'Outline': { executor: OutlineComponent, tags: ['llm'] },
 };
 
-program.command('run <filepath>').action(async filepath => {
+program.command('run <filepath>').option('-s, --skip <tags>').action(async (filepath, options) => {
     const content = fs.readFileSync(path.join(process.cwd(), filepath)).toString("utf-8");
-    console.info(await execString({ cwd: process.cwd(), registry }, content));
+    console.info(await execString({ cwd: process.cwd(), registry, skip: options.skip?.split(',') ?? [] }, content));
 });
 
-program.command('show <filepath>').action(async filepath => {
+program.command('show <filepath>').option('-s, --skip <tags>').action(async (filepath, options) => {
     const content = fs.readFileSync(path.join(process.cwd(), filepath)).toString("utf-8");
-    console.info(await showString({ cwd: process.cwd(), registry }, content));
+    console.info(await showString({ cwd: process.cwd(), registry, skip: options.skip?.split(',') ?? [] }, content));
 });
 
 program.parse();

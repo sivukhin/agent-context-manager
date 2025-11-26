@@ -37,7 +37,7 @@ function hashString(s: string): string {
 
 function hashComponent(component: ComponentData) {
     let str = [];
-    str.push(component.id);
+    str.push(component.component);
     const attributes = Object.entries(component.attributes);
     attributes.sort((a, b) => a[0].localeCompare(b[0]));
     for (const attribute of attributes) {
@@ -90,7 +90,7 @@ export async function connectDb(path: string): Promise<Db> {
                 :attributes,
                 :content,
                 :result
-            )`).all({
+            ) ON CONFLICT DO NOTHING`).all({
                 id: data.id,
                 invalidation: '',
                 component: data.component,

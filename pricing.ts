@@ -4,7 +4,8 @@ const pricePerToken = 1_000_000;
 
 const pricings: { [K: string]: { [K: string]: { input: number, inputCached: number | null, output: number } } } = {
     'anthropic': {
-        'claude-sonnet-4-20250514': { input: 3, inputCached: 0, output: 15 }
+        'claude-sonnet-4-5': { input: 3, inputCached: 0, output: 15 },
+        'claude-opus-4-5': { input: 5, inputCached: 0, output: 25 }
     },
     'openai': {
         'gpt-5': { input: 1.25, inputCached: 0.125, output: 10.00 },
