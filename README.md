@@ -86,79 +86,23 @@ name: example
 ## Components at a glance
 
 Context providers
-- File path=... or glob=... with optional selector=... (Rust/Go aware)
-- Link url=...
-- Shell cmd=...
-- GitHubIssue issue="owner/repo/123"
-- GitHubPr pr="owner/repo/456" with options:
+- `<File path=... or glob=... selector=... />`
+- `<Link url=... />`
+- `<Shell cmd=... />`
+- `<GitHubIssue issue="owner/repo/123" />`
+- `<GitHubPr pr="owner/repo/456" />` with options:
   - title, description, diff booleans to include/exclude
   - files=[...] to fetch specific files from the PR’s head SHA
   - selector applies to fetched files (Rust/Go aware)
 
 Agentic actions (require model=...)
-- Outline model="..." temperature={...}
-- Review model="..." temperature={...}
-- Research model="..." temperature={...}
-- Code model="..." language="..." temperature={...}
+- `<Outline model="..." temperature={...} />`
+- `<Review model="..." temperature={...} />`
+- `<Research model="..." temperature={...} />`
+- `<Code model="..." language="..." temperature={...} />`
 
 Utility
-- Output path="..." writes its inner content to a file
-
-
-## Code extraction (selectors)
-
-For Go and Rust files you can select specific blocks or doc-comments:
-
-- Function or type by name: selector="ServeHTTP"
-- Doc comment + signature: selector="ServeHTTP#comment"
-- Nested selectors for types/modules (Rust / some languages with nesting): selector="MyType::method" or "MyType::method#comment"
-
-Examples
-```mdx
-<File path="internal/server.go" selector="ServeHTTP#comment" />
-<File path="pkg/db/models.rs" selector="User::new" />
-```
-
-If a selector can’t be found, you’ll get an error (helps catch typos early).
-
-
-## Programmatic API (minimal)
-
-You can also invoke components directly in Node:
-
-```ts
-import { connectDb } from "./db.js";
-import { FileComponent } from "./components/file.js";
-import { OutlineComponent } from "./components/outline.js";
-import { OutputComponent } from "./components/output.js";
-
-const db = await connectDb("file:acm.db");
-const cwd = process.cwd();
-
-// 1) Load a file
-const server = await FileComponent({
-  db, cwd,
-  attributes: { path: "internal/server.go", selector: "ServeHTTP#comment" },
-  content: ""
-});
-
-// 2) Generate an outline
-const outline = await OutlineComponent({
-  db, cwd,
-  attributes: { model: "anthropic/claude-sonnet-4-5", temperature: 0.2 },
-  content: `## Context\nExplain briefly.\n\n## Files\n${server}`
-});
-
-// 3) Save the result
-await OutputComponent({
-  db, cwd,
-  attributes: { path: "docs/outline.md" },
-  content: outline
-});
-```
-
-- Results are cached: the same component+attributes+content yields the same hash and is reused from the database.
-- LLM calls are logged with usage and cost.
+- `<Output path="...">` writes its inner content to a file
 
 
 ## Cost tracking and caching
@@ -169,11 +113,7 @@ agent-context-manager stores:
 
 Example Turso query
 ```sh
-turso> SELECT provider, model, component_name, ROUND(cost, 4) AS cost
-       FROM llm_calls
-       ORDER BY start_time_utc_ms DESC
-       LIMIT 6;
-
+turso> SELECT provider, model, component_name, cost FROM llm_calls
 ┌───────────┬───────────────────┬────────────────┬────────┐
 │ provider  │ model             │ component_name │ cost   │
 ├───────────┼───────────────────┼────────────────┼────────┤
@@ -189,41 +129,14 @@ turso> SELECT provider, model, component_name, ROUND(cost, 4) AS cost
 Notes
 - Pricing is computed per provider/model using token usage (input, cached input, output).
 - Component results are addressed by a stable hash across component name, sorted attributes, and content.
-- You can invalidate a cached result programmatically (see invalidateComponent in db.ts).
-
-
-## Installation
-
-- Requires Node.js 20+ (or compatible runtime)
-- Install dependencies: npm i or pnpm i
-- Database: use Turso or local SQLite via @tursodatabase/database
-
-Connecting to Turso
-- Use a libsql URL like libsql://your-db.turso.io?authToken=...
-- Pass that DSN to connectDb(...)
-
-Local file database
-- Pass "file:acm.db" (or any file: URI) to connectDb(...)
-
-GitHub integration
-- Set GITHUB_TOKEN in your environment if you use GitHub components (PR/Issue/File)
-
+- You can invalidate a cached result programmatically.
 
 ## Built with
 
-- TypeScript
-- AI SDK (OpenAI, Anthropic, Google) for text generation
-- Tree-sitter (Go and Rust extractors)
-- Turso (@tursodatabase/database) for caching and analytics
-
-
-## Limitations and notes
-
-- Best for tree-shaped context; strictly sequential, stateful workflows are not easily represented in this format.
-- Code extraction selectors currently support Go and Rust.
-- Shell runs commands in your cwd; use carefully.
-- Network sources (Link, GitHub) depend on your connectivity and permissions.
-
+- [TypeScript](https://github.com/microsoft/TypeScript)
+- [AI SDK](https://github.com/vercel/ai) (OpenAI, Anthropic, Google) for text generation
+- [Tree-sitter](https://github.com/tree-sitter/tree-sitter) (Go and Rust extractors)
+- [Turso](https://github.com/tursodatabase/turso) (@tursodatabase/database) for caching and analytics
 
 ## Examples
 
@@ -260,30 +173,3 @@ Generate code from an outline:
   <File path="docs/outline.md" />
 </Code>
 ```
-
-Fetch specific files from a GitHub PR and include their doc comments:
-```mdx
-<GitHubPr
-  pr="owner/repo/456"
-  files={["internal/server.go", "internal/router.go"]}
-  selector="ServeHTTP#comment"
-  title={true}
-  description={true}
-  diff={false}
-/>
-```
-
-
-## FAQ
-
-- Does it require a special runner?
-  Author your flows in MDX-like files or call components programmatically. The components are plain async functions that accept { db, cwd, attributes, content } and return strings. You can integrate them into any build or scripting setup.
-
-- Can I reuse results if I move blocks around?
-  Yes. Results are cached by content hash (component name + attributes + content). Reordering in the tree does not change the hash.
-
-- Can I see how much I paid per step?
-  Yes. Every LLM call is recorded with provider, model, usage, and computed cost. Query the llm_calls table for analytics.
-
-- What models are supported?
-  Any model available via AI SDK providers in model.ts: openai/..., anthropic/..., google/... (e.g., openai/gpt-5, anthropic/claude-sonnet-4-5).
