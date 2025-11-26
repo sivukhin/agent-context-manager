@@ -22,6 +22,7 @@ import { ReviewComponent } from './components/review.js';
 import { ResearchComponent } from './components/research.js';
 import { CodeComponent } from './components/code.js';
 import { OutlineComponent } from './components/outline.js';
+import { ReadmeComponent } from './components/readme.js';
 import { LinkComponent } from './components/link.js';
 import { OutputComponent } from './components/output.js';
 import { GitHubIssueComponent } from './components/gh_issue.js';
@@ -222,6 +223,7 @@ const registry = {
     'Research': { executor: ResearchComponent, tags: ['llm'] },
     'Code': { executor: CodeComponent, tags: ['llm'] },
     'Outline': { executor: OutlineComponent, tags: ['llm'] },
+    'Readme': { executor: ReadmeComponent, tags: ['llm'] },
 };
 
 program.command('run <filepath>').option('-s, --skip <tags>').action(async (filepath, options) => {
