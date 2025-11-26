@@ -1,0 +1,61 @@
+---
+name: 2025-11-27-acm-readme
+---
+
+<Output path="README.md">
+
+<Readme model='openai/gpt-5'>
+
+# Task
+
+Generate README for the agent-context-manager project.
+
+The project purpose is to provide a simple way to manage complex context by using familiar MDX syntax where JSX components play the role of either context providers (local files, links, shell commands) or agentic commands (summarization, review, code, etc).
+
+agent-context-manager allows to build tree-shaped context structures which can be useful in case of large context analysis (so, you can group relevant files together, summarize them, then summarize docs independently, then put this summarized part in the review component, etc).
+
+Note, that sequential workflows is not easily representable in this format.
+
+You can use this prompt as an example:
+<File path="./acm-readme.mdx" />
+
+# Suggestions
+
+Make README lightweight and focus on examples (small if possible) and motivation.
+- Include example how to use it which showcase combination of different components (Outline, Code, Shell, Link, File).
+- The motivation for the project is to get more control and flexibility over context management process
+
+You can also include some sample from the tursodatabase content. For example:
+```sh
+turso> SELECT provider, model, component_name, cost FROM llm_calls;
+┌───────────┬───────────────────┬────────────────┬────────────┐
+│ provider  │ model             │ component_name │ cost       │
+├───────────┼───────────────────┼────────────────┼────────────┤
+│ openai    │ gpt-5             │ Code           │ 0.16058875 │
+├───────────┼───────────────────┼────────────────┼────────────┤
+│ openai    │ gpt-5             │ Code           │  0.1818425 │
+├───────────┼───────────────────┼────────────────┼────────────┤
+│ openai    │ gpt-5             │ Code           │ 0.13466975 │
+├───────────┼───────────────────┼────────────────┼────────────┤
+│ openai    │ gpt-5             │ Code           │ 0.12092875 │
+├───────────┼───────────────────┼────────────────┼────────────┤
+│ anthropic │ claude-sonnet-4-5 │ Code           │   0.123624 │
+├───────────┼───────────────────┼────────────────┼────────────┤
+│ anthropic │ claude-sonnet-4-5 │ Outline        │   0.085926 │
+├───────────┼───────────────────┼────────────────┼────────────┤
+│ anthropic │ claude-sonnet-4-5 │ Outline        │   0.072663 │
+├───────────┼───────────────────┼────────────────┼────────────┤
+```
+- Feel free to adjust numbers / values to make example more compact and more information-dense
+
+
+Note, that agent-context-manager stores context results and LLM calls in the tursodatabase and reuse them if possible (so, context blocks can be moved around without paying unnecessary cost for their evaluation).
+- Include the Turso in the section "Built with" or something like this
+
+
+# Source code to look at and compose examples:
+<File glob={["*.ts", "components/*.ts"]} />
+
+</Readme>
+
+</Output>
