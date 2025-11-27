@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import { parse, restore } from "./parser.js";
 import { extract } from './extractor.js';
+import * as fs from 'fs';
+import path from 'path';
 
 describe('rust_parse()', () => {
     it('parse comments', () => {
@@ -106,3 +108,27 @@ func test()`)
     });
 })
 
+
+describe('markdown', () => {
+    it("parse", () => {
+        const content = `
+# A
+
+a content
+
+## B
+
+b content
+
+# C
+
+c content
+
+# D
+
+d content`;
+        expect(extract("md", content, "B")).toEqual(`## B
+
+b content`)
+    })
+})

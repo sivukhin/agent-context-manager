@@ -1,6 +1,7 @@
 import * as child_process from "child_process";
 import { ComponentArgs } from "../types.js";
 import { wrap } from "../wrap.js";
+import { extractMaybe } from "../extractor.js";
 
 export async function ShellComponent(args: ComponentArgs): Promise<string> {
     const cmd = args.attributes["cmd"];
@@ -27,5 +28,7 @@ export async function ShellComponent(args: ComponentArgs): Promise<string> {
     if (process.exitCode != 0) {
         throw new Error(`command failed with non-zero exit code: cmd=${cmd}, exit=${process.exitCode}, stdout=${stdout}, stderr=${stderr}`);
     }
-    return wrap(stdout, args.attributes);
+    const ext = args.attributes["ext"];
+    const fakePath = ext == null ? null : "test" + ext;
+    return wrap(extractMaybe(stdout, args.attributes["selector"], fakePath), args.attributes);
 }

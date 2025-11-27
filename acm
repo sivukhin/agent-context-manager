@@ -228,12 +228,14 @@ const registry = {
 
 program.command('run <filepath>').option('-s, --skip <tags>').action(async (filepath, options) => {
     const content = fs.readFileSync(path.join(process.cwd(), filepath)).toString("utf-8");
-    console.info(await execString({ cwd: process.cwd(), registry, skip: options.skip?.split(',') ?? [] }, content));
+    const result = await execString({ cwd: process.cwd(), registry, skip: options.skip?.split(',') ?? [] }, content);
+    console.info(result);
 });
 
 program.command('show <filepath>').option('-s, --skip <tags>').action(async (filepath, options) => {
     const content = fs.readFileSync(path.join(process.cwd(), filepath)).toString("utf-8");
-    console.info(await showString({ cwd: process.cwd(), registry, skip: options.skip?.split(',') ?? [] }, content));
+    const result = await showString({ cwd: process.cwd(), registry, skip: options.skip?.split(',') ?? [] }, content);
+    console.info(result);
 });
 
 program.parse();

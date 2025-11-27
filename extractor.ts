@@ -9,8 +9,8 @@ export interface Extracted {
     imageContent?: any;
 }
 
-export function extractMaybe(content: string, selector: string | null, contentPath: string): string {
-    if (selector == null) {
+export function extractMaybe(content: string, selector: string | null, contentPath: string | null): string {
+    if (selector == null || contentPath == null) {
         return content;
     }
     const ext = path.extname(contentPath);
@@ -18,26 +18,36 @@ export function extractMaybe(content: string, selector: string | null, contentPa
         return extract("rust", content, selector);
     } else if (ext == ".go") {
         return extract("go", content, selector);
+    } else if (ext == ".md") {
+        return extract("md", content, selector);
     } else {
         throw new Error(`unsupported source code file: ${ext}`);
     }
 }
 
-export function extract(extension: "rust" | "go", content: string, selector: string): string {
-    const sel = parseSelector(selector);
+export function extract(extension: "rust" | "go" | "md", content: string, selector: string): string {
+    const sels = parseSelector(selector);
     let blocks;
     if (extension == "rust") {
         blocks = parse("rust", content);
     } else if (extension == "go") {
         blocks = parse("go", content);
+    } else if (extension == "md") {
+        blocks = parse("md", content);
     } else {
         throw new Error(`unsupported source code file: ${extension}`);
     }
-    const selected = select(blocks, sel);
-    if (selected.length == 0) {
+    const result = [];
+    for (const sel of sels) {
+        const selected = select(blocks, sel);
+        if (selected.length > 0) {
+            result.push(restore(content!, selected));
+        }
+    }
+    if (result.length == 0) {
         throw new Error(`unable to find block by selector: selector=${selector}`);
     }
-    return restore(content!, selected);
+    return result.join('\n\n');
 }
 
 export function extractPatch(diffs: parseDiff.File[]): Extracted[] {
@@ -55,8 +65,8 @@ export function extractPatch(diffs: parseDiff.File[]): Extracted[] {
     return extracted;
 }
 
-function parseSelector(selector: string): string[] {
-    return selector.split(/::|(?=#)/);
+function parseSelector(selector: string): string[][] {
+    return selector.split('|').map(t => t.split(/::|(?=#)/))
 }
 
 export interface GithubPr {

@@ -1,6 +1,7 @@
 import Parser from "tree-sitter";
 import Rust from "tree-sitter-rust";
 import Go from "tree-sitter-go";
+import Markdown from "@tree-sitter-grammars/tree-sitter-markdown";
 
 export interface Position {
     byteOffset: number;
@@ -70,6 +71,7 @@ function blocks(node: Parser.SyntaxNode): Block[] {
             case "mod_item":
             case "impl_item":
             case "struct_item":
+            case "section":
             case "class_declaration": {
                 let name = child.childForFieldName("name")?.text;
                 const body = child.childForFieldName("body");
@@ -79,6 +81,9 @@ function blocks(node: Parser.SyntaxNode): Block[] {
                     }
                     if (c.type == "type_identifier") {
                         name = c.text;
+                    }
+                    if (c.type == 'atx_heading') {
+                        name = c.text.trim().replace(/#+ +/g, '');
                     }
                 }
                 extracted.push({
@@ -93,7 +98,7 @@ function blocks(node: Parser.SyntaxNode): Block[] {
                         lineNumber: child.endPosition.row,
                         lineOffset: child.endPosition.column,
                     },
-                    children: body ? blocks(body) : [],
+                    children: body ? blocks(body) : blocks(child),
                     references: [],
                     comment: comment,
                     commentBlock: commentBlock,
@@ -165,15 +170,19 @@ function blocks(node: Parser.SyntaxNode): Block[] {
     return extracted;
 }
 
-export function parse(language: "rust" | "go", code: string): Block[] {
+export function parse(language: "rust" | "go" | "md", code: string): Block[] {
     const parser = new Parser();
+    const bufferSize = 64 * 1024 * 1024;
     switch (language) {
         case "rust":
             parser.setLanguage(Rust as any);
-            return blocks(parser.parse(code).rootNode);
+            return blocks(parser.parse(code, undefined, { bufferSize }).rootNode);
         case "go":
             parser.setLanguage(Go as any);
-            return blocks(parser.parse(code).rootNode);
+            return blocks(parser.parse(code, undefined, { bufferSize }).rootNode);
+        case "md":
+            parser.setLanguage(Markdown as any);
+            return blocks(parser.parse(code, undefined, { bufferSize }).rootNode);
     }
 }
 
@@ -193,8 +202,16 @@ export function select(blocks: Block[], selector: string[]): Block[] {
         return blocks;
     }
     const result: Block[] = [];
+    const regex = selector[0][0] == '~' ? new RegExp(selector[0].substring(1)) : null;
+    const match = (x: string) => {
+        if (regex != null) {
+            return regex.test(x);
+        } else {
+            return x == selector[0];
+        }
+    }
     for (const block of blocks) {
-        if (block.name == selector[0]) {
+        if (match(block.name || "")) {
             if (selector.length == 1) {
                 result.push(block);
             } else {
@@ -206,6 +223,8 @@ export function select(blocks: Block[], selector: string[]): Block[] {
                     result.push(...found);
                 }
             }
+        } else {
+            result.push(...select(block.children, selector));
         }
     }
     return result;
