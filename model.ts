@@ -1,8 +1,9 @@
 import { generateText, ModelMessage } from "ai"
-import { openai } from "@ai-sdk/openai"
-import { anthropic } from "@ai-sdk/anthropic"
+import { createOpenAI } from "@ai-sdk/openai"
+import { createAnthropic } from "@ai-sdk/anthropic"
 import { google } from "@ai-sdk/google"
 import { Db } from "./db.js";
+import { fetch, Agent } from 'undici'
 
 export interface TextOpts {
     model: string;
@@ -10,6 +11,44 @@ export interface TextOpts {
     temperature?: number;
     prompt: ModelMessage[];
 }
+
+const TimeoutMs = 10 * 60 * 1000;
+
+const openai = createOpenAI({
+    apiKey: process.env.OPENAI_API_KEY,
+    fetch: (url, options) => {
+        return fetch(url, {
+            ...options,
+            // @ts-ignore
+            idleTimeout: TimeoutMs,
+            // @ts-ignore
+            dispatcher: new Agent({
+                headersTimeout: TimeoutMs,
+                bodyTimeout: TimeoutMs,
+                connectTimeout: TimeoutMs,
+                keepAliveTimeout: TimeoutMs,
+            }),
+        })
+    },
+});
+
+const anthropic = createAnthropic({
+    apiKey: process.env.ANTHROPIC_API_KEY,
+    fetch: (url, options) => {
+        return fetch(url, {
+            ...options,
+            // @ts-ignore
+            idleTimeout: TimeoutMs,
+            // @ts-ignore
+            dispatcher: new Agent({
+                headersTimeout: TimeoutMs,
+                bodyTimeout: TimeoutMs,
+                connectTimeout: TimeoutMs,
+                keepAliveTimeout: TimeoutMs,
+            }),
+        })
+    },
+});
 
 export async function text(db: Db, opts: TextOpts): Promise<string> {
     const tokens = opts.model.split('/');
@@ -31,7 +70,7 @@ export async function text(db: Db, opts: TextOpts): Promise<string> {
         model: model,
         temperature: opts.temperature,
         prompt: opts.prompt,
-        abortSignal: AbortSignal.timeout(10 * 60 * 1000)
+        abortSignal: AbortSignal.timeout(TimeoutMs)
     });
     const duration = performance.now() - start;
     const response = result.content.filter(c => c.type == 'text').map(c => c.text).join('\n');
