@@ -1,18 +1,11 @@
 import { connect, Database } from "@tursodatabase/database";
 import { customAlphabet } from "nanoid";
-import { ComponentAttributes } from "./types.js";
+import { ComponentAttributes, ComponentData, ComponentOutput } from "./types.js";
 import { LanguageModelUsage } from "ai";
 import { price } from "./pricing.js";
 import { createHash } from "crypto";
 
 const nanoid = customAlphabet('0123456789abcdef');
-
-interface ComponentData {
-    id: string;
-    component: string;
-    attributes: ComponentAttributes;
-    content: string;
-}
 
 interface LlmData {
     model: string;
@@ -25,8 +18,8 @@ interface LlmData {
 }
 
 export interface Db {
-    getComponent(data: ComponentData): Promise<string>;
-    setComponent(data: ComponentData, result: string): Promise<void>;
+    getComponent(data: ComponentData): Promise<ComponentOutput | null>;
+    setComponent(data: ComponentData, result: ComponentOutput): Promise<void>;
     invalidateComponent(data: ComponentData): Promise<void>;
     recordLlm(data: LlmData): Promise<void>;
 }
@@ -35,7 +28,7 @@ function hashString(s: string): string {
     return createHash('sha256').update(s).digest('hex');
 }
 
-function hashComponent(component: ComponentData) {
+export function hashComponent(component: ComponentData): string {
     let str = [];
     str.push(component.component);
     const attributes = Object.entries(component.attributes);
@@ -68,17 +61,24 @@ export async function connectDb(path: string): Promise<Db> {
         invalidation_nonce INTEGER,
         component_name TEXT,
         hash TEXT,
-        attributes TEXT,
-        content TEXT,
-        result TEXT,
+        input_attributes TEXT,
+        input_content TEXT,
+        output_attributes TEXT,
+        output_content TEXT,
         PRIMARY KEY (hash, invalidation_nonce)
     )`);
 
     return {
         async getComponent(data) {
             const hash = hashComponent(data);
-            const result = await database.prepare(`SELECT result FROM context_components WHERE hash = ? and invalidation_nonce = ''`).get([hash]);
-            return result?.result;
+            const result = await database.prepare(`SELECT output_content, output_attributes FROM context_components WHERE hash = ? and invalidation_nonce = ''`).get([hash]);
+            if (result == null) {
+                return null;
+            }
+            return {
+                content: result.output_content,
+                attributes: result.output_attributes,
+            };
         },
         async setComponent(data, result) {
             const hash = hashComponent(data);
@@ -87,17 +87,19 @@ export async function connectDb(path: string): Promise<Db> {
                 :invalidation,
                 :component,
                 :hash,
-                :attributes,
-                :content,
-                :result
+                :input_attributes,
+                :input_content,
+                :output_attributes,
+                :output_content
             ) ON CONFLICT DO NOTHING`).all({
                 id: data.id,
                 invalidation: '',
                 component: data.component,
                 hash: hash,
-                attributes: JSON.stringify(data.attributes),
-                content: data.content,
-                result: result,
+                input_attributes: JSON.stringify(data.attributes),
+                input_content: data.content,
+                output_attributes: result.attributes ? JSON.stringify(result.attributes) : null,
+                output_content: result.content,
             });
         },
         async invalidateComponent(data) {

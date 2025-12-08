@@ -1,11 +1,12 @@
-import { ComponentArgs } from "../types.js";
+import { ComponentArgs, ComponentOutput } from "../types.js";
 import { wrap } from "../wrap.js";
 import { extractGithubIssue } from "../extractor.js";
 
-export async function GitHubIssueComponent(args: ComponentArgs): Promise<string> {
+export async function GitHubIssueComponent(args: ComponentArgs): Promise<ComponentOutput> {
     const issue = await extractGithubIssue(args.attributes["issue"]);
-    const content = `Title: ${issue.title}
+    const info = `Title: ${issue.title}
 Description: ${issue.description}
 `;
-    return wrap(content, args.attributes);
+    const content = wrap(info, args.attributes);
+    return { content };
 }

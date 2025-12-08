@@ -1,14 +1,14 @@
-import { ComponentArgs } from '../types.js';
+import { ComponentArgs, ComponentOutput } from '../types.js';
 import { text } from '../model.js';
 
-export async function CodeComponent(args: ComponentArgs) {
+export async function CodeComponent(args: ComponentArgs): Promise<ComponentOutput> {
     const model = args.attributes["model"];
     if (model == null) { throw new Error("model must be set"); }
     const language = args.attributes["language"];
     if (language == null) { throw new Error("language must be set"); }
 
     const temperature = args.attributes["temperature"];
-    return await text(args.db, {
+    const content = await text(args.session.db, {
         model: model,
         temperature: temperature,
         component: 'Code',
@@ -16,7 +16,7 @@ export async function CodeComponent(args: ComponentArgs) {
             {
                 role: 'system',
                 content: `
-You are the assistant for writing the code.
+You are a senior software engineer proficient in language ${language}.
 
 Your main task is produce clean and correct code written in language ${language}.
 
@@ -30,8 +30,9 @@ The task will be given in a markdown format with necessary description written i
             },
             {
                 role: 'user',
-                content: args.content,
+                content: args.content.content,
             }
         ]
     });
+    return { content };
 }

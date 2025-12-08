@@ -1,13 +1,13 @@
 import { ComponentArgs, ComponentOutput } from "../types.js";
 
-export async function OutputComponent(args: ComponentArgs): Promise<ComponentOutput> {
+export async function InputComponent(args: ComponentArgs): Promise<ComponentOutput> {
     const ref = args.attributes["ref"];
     if (ref == null) {
         throw new Error(`ref attribute must be set`);
     }
-    const output = await args.session.getOutputById(ref);
-    if (output == null) {
+    const input = await args.session.getInputById(ref);
+    if (input == null) {
         throw new Error(`component by id ${ref} is not found`);
     }
-    return { content: output.content };
+    return { content: input };
 }

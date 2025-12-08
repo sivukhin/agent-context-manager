@@ -1,11 +1,11 @@
-import { ComponentArgs } from '../types.js';
+import { ComponentArgs, ComponentOutput } from '../types.js';
 import { text } from '../model.js';
 
-export async function ResearchComponent(args: ComponentArgs) {
+export async function ResearchComponent(args: ComponentArgs): Promise<ComponentOutput> {
     const model = args.attributes["model"];
     if (model == null) { throw new Error("model must be set"); }
     const temperature = args.attributes["temperature"];
-    return await text(args.db, {
+    const content = await text(args.session.db, {
         model: model,
         temperature: temperature,
         component: 'Research',
@@ -33,8 +33,9 @@ The task will be given in a markdown format with necessary description written i
             },
             {
                 role: 'user',
-                content: args.content,
+                content: args.content.content,
             }
         ]
     });
+    return { content };
 }

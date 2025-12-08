@@ -1,9 +1,12 @@
 import { generateText, ModelMessage } from "ai"
 import { createOpenAI } from "@ai-sdk/openai"
 import { createAnthropic } from "@ai-sdk/anthropic"
-import { google } from "@ai-sdk/google"
+import { createGoogleGenerativeAI } from "@ai-sdk/google"
 import { Db } from "./db.js";
 import { fetch, Agent } from 'undici'
+
+import { encoding_for_model, TiktokenModel } from "@dqbd/tiktoken"
+import { countTokens } from "@anthropic-ai/tokenizer"
 
 export interface TextOpts {
     model: string;
@@ -50,6 +53,38 @@ const anthropic = createAnthropic({
     },
 });
 
+const google = createGoogleGenerativeAI({
+    apiKey: process.env.GOOGLE_GENERATIVE_AI_API_KEY,
+    fetch: (url, options) => {
+        return fetch(url, {
+            ...options,
+            // @ts-ignore
+            idleTimeout: TimeoutMs,
+            // @ts-ignore
+            dispatcher: new Agent({
+                headersTimeout: TimeoutMs,
+                bodyTimeout: TimeoutMs,
+                connectTimeout: TimeoutMs,
+                keepAliveTimeout: TimeoutMs,
+            }),
+        })
+    },
+});
+
+export function tokens(model: string, text: string): number {
+    const tokens = model.split('/');
+    switch (tokens[0]) {
+        case "openai":
+            const encoding = encoding_for_model(tokens[1] as TiktokenModel);
+            return encoding.encode_ordinary(text).length
+        case "anthropic":
+            return countTokens(text);
+        case "google":
+            throw new Error("tokens estimation is not supported for google models");
+    }
+    throw new Error(`unexpected model provider: ${tokens[0]}`);
+}
+
 export async function text(db: Db, opts: TextOpts): Promise<string> {
     const tokens = opts.model.split('/');
     let model: any;
@@ -66,6 +101,7 @@ export async function text(db: Db, opts: TextOpts): Promise<string> {
     }
     const startUnixTs = Date.now();
     const start = performance.now();
+
     const result = await generateText({
         model: model,
         temperature: opts.temperature,

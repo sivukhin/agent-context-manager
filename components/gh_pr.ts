@@ -1,8 +1,8 @@
-import { ComponentArgs } from "../types.js";
+import { ComponentArgs, ComponentOutput } from "../types.js";
 import { wrap } from "../wrap.js";
 import { extractGithubFile, extractGithubPr, extractMaybe, extractPatch } from "../extractor.js";
 
-export async function GitHubPrComponent(args: ComponentArgs): Promise<string> {
+export async function GitHubPrComponent(args: ComponentArgs): Promise<ComponentOutput> {
     const pr = await extractGithubPr(args.attributes["pr"]);
     const patch = extractPatch(pr.diff);
 
@@ -28,5 +28,6 @@ export async function GitHubPrComponent(args: ComponentArgs): Promise<string> {
         }
         elements.push(`## Selected files\n${files.join("\n")}`);
     }
-    return wrap(elements.join('\n'), args.attributes);
+    const content = wrap(elements.join('\n'), args.attributes);
+    return { content };
 }

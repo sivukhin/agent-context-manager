@@ -5,40 +5,58 @@ import path from 'path';
 
 config({ path: path.join(import.meta.dirname, '.env'), quiet: true })
 
+import chalk from 'chalk';
 import { unified } from 'unified'
 import remarkParse from 'remark-parse'
 import remarkMdx from 'remark-mdx'
 import remarkStringify from 'remark-stringify'
 import remarkFrontmatter from "remark-frontmatter"
 import * as yaml from "js-yaml";
-import { Node } from 'mdast';
+import { Node, Nodes } from 'mdast';
 
 import * as fs from "fs";
 
-import { ComponentArgs, ComponentAttributes } from './types.js';
+import { ComponentArgs, ComponentAttributes, ComponentOutput, ComponentData, ContextSession } from './types.js';
+import { InputComponent } from './components/input.js';
+import { OutputComponent } from './components/output.js';
 import { ShellComponent } from './components/shell.js';
 import { FileComponent } from './components/file.js';
+import { TextComponent } from './components/text.js';
 import { ReviewComponent } from './components/review.js';
 import { ResearchComponent } from './components/research.js';
 import { CodeComponent } from './components/code.js';
 import { OutlineComponent } from './components/outline.js';
 import { ReadmeComponent } from './components/readme.js';
+import { LlmComponent } from './components/llm.js';
 import { LinkComponent } from './components/link.js';
-import { OutputComponent } from './components/output.js';
 import { GitHubIssueComponent } from './components/gh_issue.js';
 import { GitHubPrComponent } from './components/gh_pr.js';
 
 import { program } from "commander";
-import { connectDb, Db } from './db.js';
+import { connectDb, Db, hashComponent } from './db.js';
+import { tokens } from './model.js';
+import { graph, Graph } from './graph.js';
 
 interface Context {
     frontmatter: { [K: string]: any };
-    tree: ContextTree[];
+    roots: string[];
+    nodes: Collection<ContextNode>;
 }
 
-type ContextTree =
-    { type: 'text', content: string } |
-    { type: 'context', id: string, name: string, attributes: ComponentAttributes, children: ContextTree[] };
+type ContextNode =
+    { type: 'text', id: string, content: string } |
+    { type: 'context', id: string, refs: string[], name: string, attributes: ComponentAttributes, children: string[] };
+
+function printNode(node: ContextNode, content?: string): string {
+    if (node.type === 'context') {
+        const attributes = Object.entries(node.attributes).map(e => `${e[0]}=${JSON.stringify(e[1])}`).join(" ");
+        return `<${node.name} ${attributes}>\n${content}\n</${node.name}>`;
+    } else {
+        return node.content;
+    }
+}
+
+
 
 const processor = unified()
     .use(remarkParse)
@@ -50,33 +68,100 @@ type ContextState = {
     last: number;
 }
 
-function createContextTreeFromAst(ctx: ContextState, ast: Node): ContextTree[] {
+interface Collection<T> {
+    add(key: string, value: T): void;
+    get(key: string): T | null;
+    mustGet(key: string): T;
+    entries(): [string, T][];
+}
+
+function collection<T>(): Collection<T> {
+    const values = new Map();
+    return {
+        add(key: string, value: T) {
+            if (values.has(key)) {
+                throw new Error(`duplicate key: ${key}`);
+            }
+            values.set(key, value);
+        },
+        get(key: string) {
+            return values.get(key);
+        },
+        mustGet(key: string) {
+            const value = values.get(key);
+            if (value == null) {
+                throw new Error(`no node with key ${key} `);
+            }
+            return value;
+        },
+        entries() {
+            return Array.from(values.entries());
+        },
+    }
+}
+
+function createContextTreeFromAst(ctx: ContextState, ast: Node): [string, Collection<ContextNode>] {
     if (ast.type == 'mdxJsxFlowElement') {
         let attributes: { [K: string]: any } = {};
+        let id = null;
+        let refs = [];
         for (const attribute of (ast as any).attributes) {
             if (attribute.type == 'mdxJsxAttribute') {
+                let value = undefined;
                 if (typeof attribute.value == "string") {
-                    attributes[attribute.name] = attribute.value;
+                    value = attribute.value;
                 } else if (attribute.value != null) {
-                    attributes[attribute.name] = eval(attribute.value.value);
+                    value = eval(attribute.value.value);
+                } else {
+                    value = true;
+                }
+                if (attribute.name == 'id' && value !== undefined) {
+                    id = value;
+                } else if (value !== undefined) {
+                    if (attribute.name == "ref") {
+                        refs.push(value);
+                    }
+                    attributes[attribute.name] = value;
                 }
             } else {
-                throw new Error(`unsupported JSX attribute: ${attribute}`);
+                throw new Error(`unsupported JSX attribute: ${attribute} `);
             }
         }
         ctx.last += 1;
-        return [{
+        if (id == null) {
+            id = `${(ast as any).name}#${ctx.last}`;
+        }
+        const aggregated = collection<ContextNode>();
+        const childrenIds: string[] = [];
+        for (const child of ((ast as any).children as any[])) {
+            const childContext = createContextTreeFromAst(ctx, child);
+            childrenIds.push(childContext[0]);
+            for (const childEntry of childContext[1].entries()) {
+                aggregated.add(childEntry[0], childEntry[1]);
+            }
+        }
+
+        const context: ContextNode = {
             type: 'context',
-            id: `${(ast as any).name}#${ctx.last}`,
+            id,
+            refs,
             name: (ast as any).name,
             attributes: attributes,
-            children: ((ast as any).children as any[]).flatMap(c => createContextTreeFromAst(ctx, c))
-        }];
+            children: childrenIds,
+        };
+        aggregated.add(id, context);
+        return [id, aggregated]
     } else {
-        return [{
+        ctx.last += 1;
+        const id = `#${ctx.last}`;
+        const context: ContextNode = {
             type: 'text',
+            id,
             content: processor.stringify(ast as any)
-        }];
+        };
+        const aggregated = collection<ContextNode>();
+        aggregated.add(id, context);
+        return [id, aggregated];
     }
 }
 
@@ -89,18 +174,31 @@ function createContextTreeFromString(content: string): Context {
         frontmatter = yaml.load(children[0].value) as any;
         children = children.slice(1);
     }
-    const tree = children.flatMap(c => createContextTreeFromAst(ctx, c));
-    return { tree, frontmatter }
+    const roots = [];
+    const aggregated = collection<ContextNode>();
+    for (const child of children) {
+        const [root, nodes] = createContextTreeFromAst(ctx, child);
+        roots.push(root);
+        for (const [key, node] of nodes.entries()) {
+            aggregated.add(key, node);
+        }
+    }
+    return { roots, nodes: aggregated, frontmatter }
 }
 
 interface Component {
-    executor: (args: ComponentArgs) => Promise<string>,
+    executor: (args: ComponentArgs) => Promise<ComponentOutput>,
     tags: string[];
+}
+
+interface NodeSelector {
+    id: string;
+    side: "input" | "output"
 }
 
 interface AgentContextManagerOpts {
     cwd: string;
-    skip: string[];
+    selector?: NodeSelector;
     registry: { [K: string]: Component }
 }
 
@@ -114,127 +212,387 @@ function intersects(a: string[], b: string[]): boolean {
     return false;
 }
 
-async function execContext(db: Db, opts: AgentContextManagerOpts, context: ContextTree[]): Promise<string> {
-    const result = [];
-    for (const element of context) {
-        switch (element.type) {
+
+function session(db: Db, opts: AgentContextManagerOpts): ContextSession {
+    const byHash = new Map<string, ComponentOutput>();
+    const inputById = new Map<string, string>();
+    const outputById = new Map<string, ComponentOutput>();
+    return {
+        db,
+        async getInputById(id: string): Promise<string | null> {
+            return inputById.get(id) ?? null;
+        },
+        async getOutputById(id: string): Promise<ComponentOutput | null> {
+            return outputById.get(id) ?? null;
+        },
+        async getComponentByData(data: ComponentData): Promise<ComponentOutput | null> {
+            const component = opts.registry[data.component];
+            if (component.tags.includes("nocache")) {
+                return null;
+            }
+            const hash = hashComponent(data);
+            let value = byHash.get(hash);
+            if (value != null) {
+                return value;
+            }
+            return await db.getComponent(data);
+        },
+        async setComponent(data: ComponentData, output: ComponentOutput): Promise<void> {
+            byHash.set(hashComponent(data), output);
+            inputById.set(data.id, data.content);
+            outputById.set(data.id, output);
+            if (data.component == '') {
+                return;
+            }
+            const component = opts.registry[data.component];
+            if (component.tags.includes("nocache")) {
+                return;
+            }
+            await db.setComponent(data, output);
+        }
+    };
+}
+
+function preview(text: string): string {
+    let result = text.replaceAll('\n', '\\n');
+    if (result.length < 80) {
+        return result;
+    }
+    return result.substring(0, 64) + '...';
+}
+
+async function execContext(
+    session: ContextSession,
+    opts: AgentContextManagerOpts,
+    context: Context,
+    nodes: string[],
+    depth: number,
+): Promise<ComponentOutput> {
+    const contentResult = [];
+    let attributesResult: ComponentAttributes = {};
+    let cached = true;
+    for (const nodeId of nodes) {
+        const node = context.nodes.mustGet(nodeId);
+        switch (node.type) {
             case 'text':
-                result.push(element.content);
+                contentResult.push(node.content);
                 break;
             case 'context':
-                const content = await execContext(db, opts, element.children);
-                if (!(element.name in opts.registry)) {
-                    throw new Error(`unexpected component ${element.name}`);
+                if (!(node.name in opts.registry)) {
+                    throw new Error(`unexpected component ${node.name} `);
+                }
+                const component = opts.registry[node.name]!;
+
+                console.info(' '.repeat(depth) + chalk.green(`+ start `) + chalk.bold(`${node.name} [${node.id}]`));
+                const content = await execContext(session, opts, context, node.children, depth + 1);
+                if (component.tags.includes('llm')) {
+                    const contentTokens = tokens(node.attributes['model'], content.content);
+                    console.info(' '.repeat(depth) + chalk.bold(`  ⬐ [${contentTokens}] `) + chalk.gray(chalk.italic(preview(content.content))));
+                } else {
+                    console.info(' '.repeat(depth) + chalk.bold(`  ⬐ `) + chalk.gray(chalk.italic(preview(content.content))));
                 }
 
-                const component = opts.registry[element.name]!;
-                if (intersects(opts.skip, component.tags)) {
-                    result.push(`<${element.name} ${Object.entries(element.attributes).map(e => `${e[0]}=${JSON.stringify(e[1])}`).join(" ")}>
-${content}
-</${element.name}>
-                `);
-                    break;
+                const componentData = {
+                    id: node.id,
+                    component: node.name,
+                    attributes: node.attributes,
+                    content: content.content
+                };
+
+                let componentResult = await session.getComponentByData(componentData);
+                if (componentResult == null) {
+                    const startExecutor = performance.now();
+                    componentResult = await component.executor({
+                        session,
+                        attributes: node.attributes,
+                        content: content,
+                        cwd: opts.cwd
+                    });
+                    const elapsedExecutor = performance.now() - startExecutor;
+                    console.info(' '.repeat(depth) + chalk.green(`- stop  `) + chalk.bold(`${node.name} [${node.id}]`) + chalk.gray(` ${(elapsedExecutor / 1000).toFixed(2)}s`));
+                } else {
+                    console.info(' '.repeat(depth) + chalk.blueBright(`• reuse `) + chalk.bold(`${node.name} [${node.id}]`) + ' ' + hashComponent(componentData).substring(0, 8))
+                }
+                await session.setComponent(componentData, componentResult);
+
+                if (component.tags.includes('llm')) {
+                    const contentTokens = tokens(node.attributes['model'], componentResult.content);
+                    console.info(' '.repeat(depth) + chalk.bold(`  ⤷ [${contentTokens}] `) + chalk.italic(preview(componentResult.content)));
+                } else {
+                    console.info(' '.repeat(depth) + chalk.bold(`  ⤷ `) + chalk.gray(chalk.italic(preview(componentResult.content))));
                 }
 
-                const componentData = { id: element.id, component: element.name, attributes: element.attributes, content: content };
-                let componentResult = await db.getComponent(componentData);
-                if (componentResult != null && !component.tags.includes('nocache')) {
-                    result.push(componentResult);
-                    break;
-                }
-
-                componentResult = await component.executor({
-                    db: db,
-                    attributes: element.attributes,
-                    content: content,
-                    cwd: opts.cwd
-                })
-                await db.setComponent(componentData, componentResult);
-
-                result.push(componentResult);
+                contentResult.push(componentResult.content);
+                attributesResult[node.id] = componentResult.attributes;
                 break;
         }
     }
-    return result.join('\n');
+    return {
+        content: contentResult.join('\n'),
+        attributes: attributesResult,
+    };
 }
 
-async function showContext(db: Db, opts: AgentContextManagerOpts, context: ContextTree[]): Promise<string> {
-    const result = [];
-    for (const element of context) {
-        switch (element.type) {
+function buildContextGraph(context: Context): Graph {
+    const g = graph();
+    for (const [key, value] of context.nodes.entries()) {
+        g.addNode(key);
+        if (value.type == 'context') {
+            for (const ref of value.refs) {
+                g.addEdge(key, ref);
+            }
+            for (const child of value.children) {
+                g.addEdge(key, child);
+            }
+        }
+    }
+    return g;
+}
+
+async function exec(
+    session: ContextSession,
+    opts: AgentContextManagerOpts,
+    context: Context,
+    nodes: string[],
+    filtered: Set<string>,
+    localOnly: boolean,
+): Promise<boolean> {
+    const stacks = new Map<string, ContextNode[]>();
+
+    const reversed = [...nodes];
+    reversed.reverse();
+
+    for (const nodeId of reversed) {
+        const node = context.nodes.mustGet(nodeId);
+        stacks.set(nodeId, [...(stacks.get(nodeId) || []), node]);
+        let current = stacks.get(nodeId)!;
+        if (node.type == 'context') {
+            for (const childId of node.children) {
+                if (!stacks.has(childId)) {
+                    stacks.set(childId, []);
+                }
+                stacks.set(childId, current);
+            }
+        }
+    }
+
+    const stack: [ContextNode, number][] = [];
+    for (const nodeId of nodes) {
+        if (!filtered.has(nodeId)) {
+            continue;
+        }
+        const node = context.nodes.mustGet(nodeId);
+        switch (node.type) {
             case 'text':
-                result.push(element.content);
+                session.setComponent({ id: node.id, component: '', attributes: {}, content: node.content }, { content: node.content })
                 break;
             case 'context':
-                const content = await showContext(db, opts, element.children);
-                if (!(element.name in opts.registry)) {
-                    throw new Error(`unexpected component ${element.name}`);
+                if (!(node.name in opts.registry)) {
+                    throw new Error(`unexpected component ${node.name} `);
+                }
+                const component = opts.registry[node.name]!;
+                const now = performance.now();
+
+                if (!localOnly) {
+                    const expectedStack = stacks.get(node.id)!;
+                    while (stack.length > 0) {
+                        const l = stack.length - 1;
+                        if (stack[l][0].id != expectedStack[l]?.id) {
+                            stack.pop();
+                        } else {
+                            break;
+                        }
+                    }
+                    while (stack.length != expectedStack.length) {
+                        const next = expectedStack[stack.length];
+                        if (next.type == 'context') {
+                            if (filtered.has(next.id)) {
+                                console.info(' '.repeat(stack.length) + chalk.green(`+ start `) + chalk.bold(`${next.name} [${next.id}]`));
+                            } else {
+                                console.info(' '.repeat(stack.length) + chalk.gray(`/ scope `) + chalk.bold(`${next.name} [${next.id}]`));
+                            }
+                        }
+                        stack.push([next, now])
+                    }
                 }
 
-                const component = opts.registry[element.name]!;
-                if (intersects(opts.skip, component.tags)) {
-                    result.push(`<${element.name} ${Object.entries(element.attributes).map(e => `${e[0]}=${JSON.stringify(e[1])}`).join(" ")}>
-${content}
-</${element.name}>
-                `);
-                    break;
+
+                let childrenContent = "";
+                const childrenAttributes: ComponentAttributes = {};
+                for (const c of node.children) {
+                    const result = await session.getOutputById(c);
+                    childrenContent += result?.content + "\n";
+                    childrenAttributes[c] = result?.attributes;
+                }
+                if (!localOnly) {
+                    if (component.tags.includes('llm')) {
+                        const contentTokens = tokens(node.attributes['model'], childrenContent);
+                        console.info(' '.repeat(stack.length) + chalk.bold(`  ⬐ [${contentTokens}] `) + chalk.gray(chalk.italic(preview(childrenContent))));
+                    } else {
+                        console.info(' '.repeat(stack.length) + chalk.bold(`  ⬐ `) + chalk.gray(chalk.italic(preview(childrenContent))));
+                    }
                 }
 
-                const componentData = { id: element.id, component: element.name, attributes: element.attributes, content: content };
-                let componentResult = await db.getComponent(componentData);
-                if (componentResult != null && !intersects(opts.skip, component.tags)) {
-                    result.push(componentResult);
-                    break;
+                const componentData = {
+                    id: node.id,
+                    component: node.name,
+                    attributes: node.attributes,
+                    content: childrenContent
+                };
+
+                let componentResult = await session.getComponentByData(componentData);
+                if (componentResult == null) {
+                    if (localOnly && !component.tags.includes('local')) {
+                        return false;
+                    }
+                    const startExecutor = performance.now();
+                    componentResult = await component.executor({
+                        session,
+                        attributes: node.attributes,
+                        content: { content: childrenContent, attributes: childrenAttributes },
+                        cwd: opts.cwd
+                    });
+                    if (!localOnly) {
+                        const elapsedExecutor = performance.now() - startExecutor;
+                        console.info(' '.repeat(stack.length) + chalk.green(`- stop  `) + chalk.bold(`${node.name} [${node.id}]`) + chalk.gray(` ${(elapsedExecutor / 1000).toFixed(2)}s`));
+                    }
+                } else if (componentResult != null && !localOnly) {
+                    console.info(' '.repeat(stack.length) + chalk.blueBright(`• reuse `) + chalk.bold(`${node.name} [${node.id}]`) + ' ' + hashComponent(componentData).substring(0, 8))
                 }
-                result.push(`<${element.name} ${Object.entries(element.attributes).map(e => `${e[0]}=${JSON.stringify(e[1])}`).join(" ")}>
-${content}
-</${element.name}>
-                `)
+                if (!localOnly) {
+                    if (component.tags.includes('llm')) {
+                        const contentTokens = tokens(node.attributes['model'], componentResult.content);
+                        console.info(' '.repeat(stack.length) + chalk.bold(`  ⤷ [${contentTokens}] `) + chalk.italic(preview(componentResult.content)));
+                    } else {
+                        console.info(' '.repeat(stack.length) + chalk.bold(`  ⤷ `) + chalk.gray(chalk.italic(preview(componentResult.content))));
+                    }
+                }
+                if (node.attributes["output"] != null) {
+                    if (localOnly) {
+                        if ((await session.getOutputById(node.id))?.content != componentResult.content) {
+                            return false;
+                        }
+                    } else {
+                        fs.writeFileSync(path.join(opts.cwd, node.attributes["output"]), componentResult.content);
+                        console.info(' '.repeat(stack.length) + chalk.bold(`  💾 `) + chalk.gray(node.attributes["output"]));
+                    }
+                }
+                await session.setComponent(componentData, componentResult);
                 break;
         }
     }
+    return true;
+}
+
+async function execString(opts: AgentContextManagerOpts, code: string): Promise<string> {
+    const context = createContextTreeFromString(code);
+    const contextGraph = buildContextGraph(context);
+
+    const nodes = contextGraph.nodesTopo();
+
+    let filtered = new Set(nodes);
+    if (opts.selector != null) {
+        filtered = contextGraph.reachable(opts.selector.id);
+        if (opts.selector.side == 'input') {
+            filtered.delete(opts.selector.id);
+        }
+    }
+
+    const stacks = new Map<string, ContextNode[]>();
+
+    const reversed = [...nodes];
+    reversed.reverse();
+
+    for (const nodeId of reversed) {
+        const node = context.nodes.mustGet(nodeId);
+        stacks.set(nodeId, [...(stacks.get(nodeId) || []), node]);
+        let current = stacks.get(nodeId)!;
+        if (node.type == 'context') {
+            for (const childId of node.children) {
+                if (!stacks.has(childId)) {
+                    stacks.set(childId, []);
+                }
+                stacks.set(childId, current);
+            }
+        }
+    }
+
+    const dbPath = path.join(import.meta.dirname, '.agents', context.frontmatter['name']);
+    const db = await connectDb(dbPath);
+    const current = session(db, opts);
+
+    let attempt = 1;
+    while (true) {
+        console.info(chalk.bgGray(`attempt#${attempt}`))
+        attempt += 1;
+
+        await exec(current, opts, context, nodes, filtered, false);
+        if (await exec(current, opts, context, nodes, filtered, true)) {
+            break;
+        }
+    }
+
+    let final = [];
+    if (opts.selector == null) {
+        final = context.roots;
+    }
+    if (opts.selector == null) {
+        const result = [];
+        for (const root of context.roots) {
+            result.push((await current.getOutputById(root))?.content);
+        }
+        return result.join('\n');
+    }
+
+    const node = context.nodes.mustGet(opts.selector.id);
+    if (opts.selector.side == "output") {
+        final = [opts.selector.id];
+    } else {
+        final = node.type == 'context' ? node.children : [];
+    }
+
+    const result = [];
+    for (const root of final) {
+        result.push((await current.getOutputById(root))?.content);
+    }
     return result.join('\n');
-}
-
-async function execString(opts: AgentContextManagerOpts, content: string): Promise<string> {
-    const context = createContextTreeFromString(content);
-    const dbPath = path.join(import.meta.dirname, '.agents', context.frontmatter['name']);
-    const db = await connectDb(dbPath);
-    return await execContext(db, opts, context.tree);
-}
-
-async function showString(opts: AgentContextManagerOpts, content: string): Promise<string> {
-    const context = createContextTreeFromString(content);
-    const dbPath = path.join(import.meta.dirname, '.agents', context.frontmatter['name']);
-    const db = await connectDb(dbPath);
-    return await showContext(db, opts, context.tree);
 }
 
 const registry = {
-    'Shell': { executor: ShellComponent, tags: ['local', 'nocache'] },
-    'File': { executor: FileComponent, tags: ['local', 'nocache'] },
+    'Input': { executor: InputComponent, tags: ['local', 'nocache'] },
     'Output': { executor: OutputComponent, tags: ['local', 'nocache'] },
 
-    'Link': { executor: LinkComponent, tags: ['network', 'nocache'] },
-    'GitHubIssue': { executor: GitHubIssueComponent, tags: ['network', 'nocache'] },
-    'GitHubPr': { executor: GitHubPrComponent, tags: ['network', 'nocache'] },
+    'File': { executor: FileComponent, tags: ['local', 'nocache'] },
+    'Text': { executor: TextComponent, tags: ['local', 'nocache'] },
+
+    'Shell': { executor: ShellComponent, tags: ['local'] },
+    'Link': { executor: LinkComponent, tags: ['network'] },
+    'GitHubIssue': { executor: GitHubIssueComponent, tags: ['network'] },
+    'GitHubPr': { executor: GitHubPrComponent, tags: ['network'] },
 
     'Review': { executor: ReviewComponent, tags: ['llm'] },
     'Research': { executor: ResearchComponent, tags: ['llm'] },
     'Code': { executor: CodeComponent, tags: ['llm'] },
     'Outline': { executor: OutlineComponent, tags: ['llm'] },
     'Readme': { executor: ReadmeComponent, tags: ['llm'] },
+    'Llm': { executor: LlmComponent, tags: ['llm'] },
 };
 
-program.command('run <filepath>').option('-s, --skip <tags>').action(async (filepath, options) => {
+program.command('run <filepath>').option('-n, --node <node>').action(async (filepath, options) => {
     const content = fs.readFileSync(path.join(process.cwd(), filepath)).toString("utf-8");
-    const result = await execString({ cwd: process.cwd(), registry, skip: options.skip?.split(',') ?? [] }, content);
-    console.info(result);
-});
-
-program.command('show <filepath>').option('-s, --skip <tags>').action(async (filepath, options) => {
-    const content = fs.readFileSync(path.join(process.cwd(), filepath)).toString("utf-8");
-    const result = await showString({ cwd: process.cwd(), registry, skip: options.skip?.split(',') ?? [] }, content);
+    let selector: NodeSelector | undefined = undefined;
+    if (options.node != null) {
+        selector = {
+            id: options.node.split(':')[0],
+            side: options.node.split(':')[1] == "input" ? "input" : "output",
+        };
+    }
+    const opts = {
+        cwd: process.cwd(),
+        registry,
+        selector,
+    };
+    const result = await execString(opts, content);
     console.info(result);
 });
 

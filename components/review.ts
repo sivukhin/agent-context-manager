@@ -1,11 +1,11 @@
 import { text } from '../model.js';
-import { ComponentArgs } from '../types.js';
+import { ComponentArgs, ComponentOutput } from '../types.js';
 
-export async function ReviewComponent(args: ComponentArgs) {
+export async function ReviewComponent(args: ComponentArgs): Promise<ComponentOutput> {
     const model = args.attributes["model"];
     if (model == null) { throw new Error("model must be set"); }
     const temperature = args.attributes["temperature"];
-    return await text(args.db, {
+    const content = await text(args.session.db, {
         model: model,
         temperature: temperature,
         component: 'Review',
@@ -50,8 +50,9 @@ Note, that you will be given only partial context - so some definitions can be m
             },
             {
                 role: 'user',
-                content: args.content,
+                content: args.content.content,
             }
         ]
     });
+    return { content };
 }

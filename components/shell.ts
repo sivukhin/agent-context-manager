@@ -1,10 +1,11 @@
 import * as child_process from "child_process";
-import { ComponentArgs } from "../types.js";
+import { ComponentArgs, ComponentAttributes, ComponentOutput } from "../types.js";
 import { wrap } from "../wrap.js";
 import { extractMaybe } from "../extractor.js";
 
-export async function ShellComponent(args: ComponentArgs): Promise<string> {
+export async function ShellComponent(args: ComponentArgs): Promise<ComponentOutput> {
     const cmd = args.attributes["cmd"];
+    const validation = args.attributes["validation"] == true;
     const process = child_process.spawn(cmd, {
         stdio: ["pipe", "pipe", "pipe"],
         shell: true,
@@ -25,10 +26,18 @@ export async function ShellComponent(args: ComponentArgs): Promise<string> {
             resolve()
         });
     });
+    let attributes: ComponentAttributes = {};
     if (process.exitCode != 0) {
-        throw new Error(`command failed with non-zero exit code: cmd=${cmd}, exit=${process.exitCode}, stdout=${stdout}, stderr=${stderr}`);
+        if (!validation) {
+            throw new Error(`command failed with non-zero exit code: cmd=${cmd}, exit=${process.exitCode}, stdout=${stdout}, stderr=${stderr}`);
+        } else {
+            attributes["failed"] = true;
+        }
     }
     const ext = args.attributes["ext"];
     const fakePath = ext == null ? null : "test" + ext;
-    return wrap(extractMaybe(stdout, args.attributes["selector"], fakePath), args.attributes);
+    return {
+        content: wrap(extractMaybe(stdout, args.attributes["selector"], fakePath), args.attributes),
+        attributes
+    };
 }

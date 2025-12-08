@@ -7,6 +7,9 @@ const pricings: { [K: string]: { [K: string]: { input: number, inputCached: numb
         'claude-sonnet-4-5': { input: 3, inputCached: 0, output: 15 },
         'claude-opus-4-5': { input: 5, inputCached: 0, output: 25 }
     },
+    'google': {
+        'gemini-3-pro-preview': { input: 2.00, inputCached: 0, output: 12.00 },
+    },
     'openai': {
         'gpt-5': { input: 1.25, inputCached: 0.125, output: 10.00 },
         'gpt-5-mini': { input: 0.25, inputCached: 0.025, output: 2.00 },
