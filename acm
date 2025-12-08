@@ -16,7 +16,7 @@ import { Node, Nodes } from 'mdast';
 
 import * as fs from "fs";
 
-import { ComponentArgs, ComponentAttributes, ComponentOutput, ComponentData, ContextSession } from './types.js';
+import { ComponentArgs, ComponentAttributes, ComponentOutput, ComponentData, ContextSession, deep } from './types.js';
 import { InputComponent } from './components/input.js';
 import { OutputComponent } from './components/output.js';
 import { ShellComponent } from './components/shell.js';
@@ -261,78 +261,6 @@ function preview(text: string): string {
     return result.substring(0, 64) + '...';
 }
 
-async function execContext(
-    session: ContextSession,
-    opts: AgentContextManagerOpts,
-    context: Context,
-    nodes: string[],
-    depth: number,
-): Promise<ComponentOutput> {
-    const contentResult = [];
-    let attributesResult: ComponentAttributes = {};
-    let cached = true;
-    for (const nodeId of nodes) {
-        const node = context.nodes.mustGet(nodeId);
-        switch (node.type) {
-            case 'text':
-                contentResult.push(node.content);
-                break;
-            case 'context':
-                if (!(node.name in opts.registry)) {
-                    throw new Error(`unexpected component ${node.name} `);
-                }
-                const component = opts.registry[node.name]!;
-
-                console.info(' '.repeat(depth) + chalk.green(`+ start `) + chalk.bold(`${node.name} [${node.id}]`));
-                const content = await execContext(session, opts, context, node.children, depth + 1);
-                if (component.tags.includes('llm')) {
-                    const contentTokens = tokens(node.attributes['model'], content.content);
-                    console.info(' '.repeat(depth) + chalk.bold(`  ⬐ [${contentTokens}] `) + chalk.gray(chalk.italic(preview(content.content))));
-                } else {
-                    console.info(' '.repeat(depth) + chalk.bold(`  ⬐ `) + chalk.gray(chalk.italic(preview(content.content))));
-                }
-
-                const componentData = {
-                    id: node.id,
-                    component: node.name,
-                    attributes: node.attributes,
-                    content: content.content
-                };
-
-                let componentResult = await session.getComponentByData(componentData);
-                if (componentResult == null) {
-                    const startExecutor = performance.now();
-                    componentResult = await component.executor({
-                        session,
-                        attributes: node.attributes,
-                        content: content,
-                        cwd: opts.cwd
-                    });
-                    const elapsedExecutor = performance.now() - startExecutor;
-                    console.info(' '.repeat(depth) + chalk.green(`- stop  `) + chalk.bold(`${node.name} [${node.id}]`) + chalk.gray(` ${(elapsedExecutor / 1000).toFixed(2)}s`));
-                } else {
-                    console.info(' '.repeat(depth) + chalk.blueBright(`• reuse `) + chalk.bold(`${node.name} [${node.id}]`) + ' ' + hashComponent(componentData).substring(0, 8))
-                }
-                await session.setComponent(componentData, componentResult);
-
-                if (component.tags.includes('llm')) {
-                    const contentTokens = tokens(node.attributes['model'], componentResult.content);
-                    console.info(' '.repeat(depth) + chalk.bold(`  ⤷ [${contentTokens}] `) + chalk.italic(preview(componentResult.content)));
-                } else {
-                    console.info(' '.repeat(depth) + chalk.bold(`  ⤷ `) + chalk.gray(chalk.italic(preview(componentResult.content))));
-                }
-
-                contentResult.push(componentResult.content);
-                attributesResult[node.id] = componentResult.attributes;
-                break;
-        }
-    }
-    return {
-        content: contentResult.join('\n'),
-        attributes: attributesResult,
-    };
-}
-
 function buildContextGraph(context: Context): Graph {
     const g = graph();
     for (const [key, value] of context.nodes.entries()) {
@@ -527,7 +455,16 @@ async function execString(opts: AgentContextManagerOpts, code: string): Promise<
         attempt += 1;
 
         await exec(current, opts, context, nodes, filtered, false);
-        if (await exec(current, opts, context, nodes, filtered, true)) {
+        let failed = false;
+        for (const node of context.roots) {
+            const attrs = (await current.getOutputById(node))?.attributes;
+            failed ||= deep(attrs, "failed").filter((x: any) => x == true).length > 0;
+        }
+        if (!failed) {
+            break;
+        }
+        if (failed && await exec(current, opts, context, nodes, filtered, true)) {
+            console.info(chalk.bgRed(`failure without changes`))
             break;
         }
     }
@@ -565,7 +502,7 @@ const registry = {
     'File': { executor: FileComponent, tags: ['local', 'nocache'] },
     'Text': { executor: TextComponent, tags: ['local', 'nocache'] },
 
-    'Shell': { executor: ShellComponent, tags: ['local'] },
+    'Shell': { executor: ShellComponent, tags: ['local', 'nocache'] },
     'Link': { executor: LinkComponent, tags: ['network'] },
     'GitHubIssue': { executor: GitHubIssueComponent, tags: ['network'] },
     'GitHubPr': { executor: GitHubPrComponent, tags: ['network'] },

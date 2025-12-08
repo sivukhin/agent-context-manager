@@ -37,7 +37,7 @@ export async function ShellComponent(args: ComponentArgs): Promise<ComponentOutp
     const ext = args.attributes["ext"];
     const fakePath = ext == null ? null : "test" + ext;
     return {
-        content: wrap(extractMaybe(stdout, args.attributes["selector"], fakePath), args.attributes),
+        content: wrap(extractMaybe(validation ? (stdout + '\n' + stderr) : stdout, args.attributes["selector"], fakePath), args.attributes),
         attributes
     };
 }

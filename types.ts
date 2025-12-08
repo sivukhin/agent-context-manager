@@ -30,9 +30,9 @@ export interface ContextSession {
     setComponent(data: ComponentData, output: ComponentOutput): Promise<void>;
 }
 
-function deep(attrs: ComponentAttributes, key: string): any[] {
+export function deep(attrs: ComponentAttributes | undefined, key: string): any[] {
     let result = [];
-    for (const entry of Object.entries(attrs)) {
+    for (const entry of Object.entries(attrs || {})) {
         if (entry[0] == key) {
             result.push(entry[1]);
         } else if (typeof entry[1] == "object") {
