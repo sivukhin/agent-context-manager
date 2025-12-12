@@ -28,6 +28,7 @@ import { CodeComponent } from './components/code.js';
 import { OutlineComponent } from './components/outline.js';
 import { ReadmeComponent } from './components/readme.js';
 import { LlmComponent } from './components/llm.js';
+import { DocComponent } from './components/doc.js';
 import { LinkComponent } from './components/link.js';
 import { GitHubIssueComponent } from './components/gh_issue.js';
 import { GitHubPrComponent } from './components/gh_pr.js';
@@ -306,9 +307,6 @@ async function exec(
 
     const stack: [ContextNode, number][] = [];
     for (const nodeId of nodes) {
-        if (!filtered.has(nodeId)) {
-            continue;
-        }
         const node = context.nodes.mustGet(nodeId);
         switch (node.type) {
             case 'text':
@@ -333,14 +331,10 @@ async function exec(
                     }
                     while (stack.length != expectedStack.length) {
                         const next = expectedStack[stack.length];
-                        if (next.type == 'context') {
-                            if (filtered.has(next.id)) {
-                                console.info(' '.repeat(stack.length) + chalk.green(`+ start `) + chalk.bold(`${next.name} [${next.id}]`));
-                            } else {
-                                console.info(' '.repeat(stack.length) + chalk.gray(`/ scope `) + chalk.bold(`${next.name} [${next.id}]`));
-                            }
-                        }
                         stack.push([next, now])
+                        if (next.type == 'context') {
+                            console.info('  '.repeat(stack.length - 1) + chalk.green(`+ start `) + chalk.bold(`${next.name} [${next.id}]`));
+                        }
                     }
                 }
 
@@ -355,9 +349,9 @@ async function exec(
                 if (!localOnly) {
                     if (component.tags.includes('llm')) {
                         const contentTokens = tokens(node.attributes['model'], childrenContent);
-                        console.info(' '.repeat(stack.length) + chalk.bold(`  ⬐ [${contentTokens}] `) + chalk.gray(chalk.italic(preview(childrenContent))));
+                        console.info('  '.repeat(stack.length - 1) + chalk.bold(`  ⬐ [${contentTokens}] `) + chalk.gray(chalk.italic(preview(childrenContent))));
                     } else {
-                        console.info(' '.repeat(stack.length) + chalk.bold(`  ⬐ `) + chalk.gray(chalk.italic(preview(childrenContent))));
+                        console.info('  '.repeat(stack.length - 1) + chalk.bold(`  ⬐ `) + chalk.gray(chalk.italic(preview(childrenContent))));
                     }
                 }
 
@@ -369,6 +363,10 @@ async function exec(
                 };
 
                 let componentResult = await session.getComponentByData(componentData);
+                if (componentResult == null && !filtered.has(nodeId)) {
+                    console.info('  '.repeat(stack.length - 1) + chalk.gray(`- skip  `) + chalk.bold(`${node.name} [${node.id}]`));
+                    break;
+                }
                 if (componentResult == null) {
                     if (localOnly && !component.tags.includes('local')) {
                         return false;
@@ -382,17 +380,17 @@ async function exec(
                     });
                     if (!localOnly) {
                         const elapsedExecutor = performance.now() - startExecutor;
-                        console.info(' '.repeat(stack.length) + chalk.green(`- stop  `) + chalk.bold(`${node.name} [${node.id}]`) + chalk.gray(` ${(elapsedExecutor / 1000).toFixed(2)}s`));
+                        console.info('  '.repeat(stack.length - 1) + chalk.green(`- stop  `) + chalk.bold(`${node.name} [${node.id}]`) + chalk.gray(` ${(elapsedExecutor / 1000).toFixed(2)}s`));
                     }
                 } else if (componentResult != null && !localOnly) {
-                    console.info(' '.repeat(stack.length) + chalk.blueBright(`• reuse `) + chalk.bold(`${node.name} [${node.id}]`) + ' ' + hashComponent(componentData).substring(0, 8))
+                    console.info('  '.repeat(stack.length - 1) + chalk.blueBright(`• reuse `) + chalk.bold(`${node.name} [${node.id}]`) + ' ' + hashComponent(componentData).substring(0, 8))
                 }
                 if (!localOnly) {
                     if (component.tags.includes('llm')) {
                         const contentTokens = tokens(node.attributes['model'], componentResult.content);
-                        console.info(' '.repeat(stack.length) + chalk.bold(`  ⤷ [${contentTokens}] `) + chalk.italic(preview(componentResult.content)));
+                        console.info('  '.repeat(stack.length - 1) + chalk.bold(`  ⤷ [${contentTokens}] `) + chalk.italic(preview(componentResult.content)));
                     } else {
-                        console.info(' '.repeat(stack.length) + chalk.bold(`  ⤷ `) + chalk.gray(chalk.italic(preview(componentResult.content))));
+                        console.info('  '.repeat(stack.length - 1) + chalk.bold(`  ⤷ `) + chalk.gray(chalk.italic(preview(componentResult.content))));
                     }
                 }
                 if (node.attributes["output"] != null) {
@@ -402,7 +400,7 @@ async function exec(
                         }
                     } else {
                         fs.writeFileSync(path.join(opts.cwd, node.attributes["output"]), componentResult.content);
-                        console.info(' '.repeat(stack.length) + chalk.bold(`  💾 `) + chalk.gray(node.attributes["output"]));
+                        console.info('  '.repeat(stack.length - 1) + chalk.bold(`  💾 `) + chalk.gray(node.attributes["output"]));
                     }
                 }
                 await session.setComponent(componentData, componentResult);
@@ -513,9 +511,10 @@ const registry = {
     'Outline': { executor: OutlineComponent, tags: ['llm'] },
     'Readme': { executor: ReadmeComponent, tags: ['llm'] },
     'Llm': { executor: LlmComponent, tags: ['llm'] },
+    'Doc': { executor: DocComponent, tags: ['llm'] },
 };
 
-program.command('run <filepath>').option('-n, --node <node>').action(async (filepath, options) => {
+program.command('run <filepath>').option('-n, --node <node>').option('-s, --silent').action(async (filepath, options) => {
     const content = fs.readFileSync(path.join(process.cwd(), filepath)).toString("utf-8");
     let selector: NodeSelector | undefined = undefined;
     if (options.node != null) {
@@ -530,7 +529,9 @@ program.command('run <filepath>').option('-n, --node <node>').action(async (file
         selector,
     };
     const result = await execString(opts, content);
-    console.info(result);
+    if (!options.silent) {
+        console.info(result);
+    }
 });
 
 program.parse();
